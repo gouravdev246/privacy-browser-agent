@@ -129,6 +129,7 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
     // (included + length) rather than dumping the (already-redacted, but
     // still large) base64 payload. Does NOT change any privacy behavior or
     // the messages themselves; remove once manual verification is done.
+    // eslint-disable-next-line no-constant-condition
     if (import.meta.env.DEV || true) {
       console.log('[PRIVACY DEBUG] OUTGOING LLM CONTEXT', {
         modelName: this.modelName,
