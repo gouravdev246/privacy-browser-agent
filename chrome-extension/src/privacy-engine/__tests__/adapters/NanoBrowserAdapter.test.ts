@@ -73,4 +73,24 @@ describe('NanoBrowserAdapter', () => {
       resetVisionDetector();
     }
   });
+
+  it('handles screenshot redaction and dev preview generation without errors', async () => {
+    resetVisionDetector();
+    setCustomVisionDetector(async () => []);
+    try {
+      const adapter = new NanoBrowserAdapter();
+      const dummyJpeg =
+        'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+      const browserState = buildBrowserState({ screenshot: dummyJpeg });
+
+      const result = await adapter.sanitizeBrowserState(browserState, null);
+
+      expect(result.allowed).toBe(true);
+      if (!result.allowed) return;
+      expect(result.screenshot).toBeTruthy();
+      expect(result.screenshot).toContain('data:image/jpeg');
+    } finally {
+      resetVisionDetector();
+    }
+  });
 });

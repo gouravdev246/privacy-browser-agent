@@ -38,7 +38,7 @@ export type SensitiveDataType =
 export type RedactionAction = 'ALLOW' | 'REDACT' | 'BLUR' | 'MASK' | 'BLOCK';
 
 /** Where a detection came from — kept for fusion + audit/evaluation purposes. */
-export type DetectionSource = 'dom' | 'regex' | 'ner' | 'vision';
+export type DetectionSource = 'dom' | 'regex' | 'ner' | 'vision' | 'ocr';
 
 export interface BoundingBox {
   xmin: number;
@@ -146,6 +146,7 @@ export interface PrivacyMetadata {
     regexMs?: number;
     nerMs?: number;
     visionMs?: number;
+    ocrMs?: number;
     fusionMs?: number;
     redactionMs?: number;
     totalMs: number;
@@ -175,9 +176,7 @@ export interface SanitizedContext {
  * when `allowed` is false, `context` in the failure branch carries NOTHING
  * derived from the raw page — callers must not fall back to raw data.
  */
-export type PrivacyResult =
-  | { allowed: true; context: SanitizedContext }
-  | { allowed: false; reason: string };
+export type PrivacyResult = { allowed: true; context: SanitizedContext } | { allowed: false; reason: string };
 
 export interface DetectorInput {
   dom?: DOMSnapshot;

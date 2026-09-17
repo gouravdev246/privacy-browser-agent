@@ -11,7 +11,15 @@
  * `chrome-extension/src/redaction/domSanitizer.ts` (pre-existing project code);
  * the keyword/label heuristics for NAME/ADDRESS/AADHAAR/PAN/PASSPORT/etc. are new.
  */
-import type { Detector, DetectorInput, DetectionSource, SensitiveDataType, SensitiveRegion, GenericDomNode } from '../core/types';
+import type {
+  Detector,
+  DetectorInput,
+  DetectionSource,
+  SensitiveDataType,
+  SensitiveRegion,
+  GenericDomNode,
+} from '../core/types';
+import { PATTERNS } from './patterns';
 
 const SENSITIVE_AUTOCOMPLETE_TOKENS: Record<string, SensitiveDataType> = {
   'cc-number': 'CREDIT_CARD',
@@ -34,6 +42,11 @@ const SENSITIVE_AUTOCOMPLETE_TOKENS: Record<string, SensitiveDataType> = {
   'address-line1': 'ADDRESS',
   'address-line2': 'ADDRESS',
   'postal-code': 'ADDRESS',
+  bday: 'DOCUMENT',
+  'bday-day': 'DOCUMENT',
+  'bday-month': 'DOCUMENT',
+  'bday-year': 'DOCUMENT',
+  sex: 'UNKNOWN_SENSITIVE',
 };
 
 const INPUT_TYPE_MAP: Record<string, SensitiveDataType> = {
@@ -42,22 +55,30 @@ const INPUT_TYPE_MAP: Record<string, SensitiveDataType> = {
   tel: 'PHONE',
 };
 
-// Keyword -> type, matched (case-insensitively, whole-word-ish) against name/id/aria-label/placeholder.
+// Keyword -> type, matched (case-insensitively, whole-word-ish) against label/name/id/aria-label/placeholder.
 const KEYWORD_RULES: Array<{ pattern: RegExp; type: SensitiveDataType }> = [
   { pattern: /aadhaar|aadhar|uidai/i, type: 'AADHAAR' },
-  { pattern: /\bpan\b|pan[_-]?number|pan[_-]?card/i, type: 'PAN' },
-  { pattern: /passport/i, type: 'PASSPORT' },
+  { pattern: /\bpan\b|pan[_-]?(?:number|no|card)|pannumber|panno|pancard/i, type: 'PAN' },
+  { pattern: /passport|passport[_-]?(?:number|no)|passportnumber|passportno/i, type: 'PASSPORT' },
+  {
+    pattern: /\b(?:dob|birth|bday|date[_-]?of[_-]?birth|dateofbirth|birthdate|birth[_-]?date)\b/i,
+    type: 'DOCUMENT',
+  },
   { pattern: /ifsc/i, type: 'IFSC' },
-  { pattern: /account[_-]?number|bank[_-]?account|acc[_-]?no/i, type: 'BANK_ACCOUNT' },
-  { pattern: /credit[_-]?card|debit[_-]?card|card[_-]?number|cvv|cvc/i, type: 'CREDIT_CARD' },
+  { pattern: /account[_-]?number|bank[_-]?account|acc[_-]?no|accountnumber/i, type: 'BANK_ACCOUNT' },
+  { pattern: /credit[_-]?card|debit[_-]?card|card[_-]?number|cardnumber|cvv|cvc/i, type: 'CREDIT_CARD' },
   { pattern: /\botp\b|one[-_]?time[-_]?(?:passcode|password|code)/i, type: 'OTP' },
-  { pattern: /\b(full[_-]?name|first[_-]?name|last[_-]?name|surname|given[_-]?name)\b/i, type: 'NAME' },
-  { pattern: /address|street|city|pincode|postal/i, type: 'ADDRESS' },
-  { pattern: /phone|mobile|contact[_-]?number/i, type: 'PHONE' },
-  { pattern: /\bemail\b/i, type: 'EMAIL' },
+  {
+    pattern:
+      /(?:full|first|last|given|sur|applicant|user|middle)[_-]?name|fname|lname|fullname|firstname|lastname|\bname\b/i,
+    type: 'NAME',
+  },
+  { pattern: /address|street|city|pincode|postal|residence|residential/i, type: 'ADDRESS' },
+  { pattern: /phone|mobile|cell|contact[_-]?(?:number|no)|mobilenumber|phonenumber|telephone/i, type: 'PHONE' },
+  { pattern: /\bemail\b|e-mail|emailaddress|email[_-]?address/i, type: 'EMAIL' },
 ];
 
-const FIELD_LABEL_ATTRS = ['name', 'id', 'aria-label', 'placeholder'];
+const FIELD_LABEL_ATTRS = ['label', 'name', 'id', 'aria-label', 'placeholder', 'title'];
 
 function detectFromField(node: GenericDomNode): SensitiveDataType | null {
   const type = node.attributes?.type?.toLowerCase();
@@ -84,12 +105,51 @@ function detectFromField(node: GenericDomNode): SensitiveDataType | null {
     }
   }
 
+  // Also check if current dynamic or static value matches known PII patterns (email, phone, PAN, passport)
+  const val = node.attributes?.value;
+  if (val && typeof val === 'string') {
+    for (const { type: patternType, regex } of PATTERNS) {
+      regex.lastIndex = 0;
+      if (regex.test(val)) {
+        return patternType;
+      }
+    }
+  }
+
+  return null;
+}
+
+function detectFromLabel(node: GenericDomNode): SensitiveDataType | null {
+  const forAttr = node.attributes?.for;
+  if (forAttr) {
+    for (const rule of KEYWORD_RULES) {
+      if (rule.pattern.test(forAttr)) {
+        return rule.type;
+      }
+    }
+  }
+  const text = node.children
+    .filter(c => c.isTextNode && c.text)
+    .map(c => c.text)
+    .join(' ');
+  if (text) {
+    for (const rule of KEYWORD_RULES) {
+      if (rule.pattern.test(text)) {
+        return rule.type;
+      }
+    }
+  }
   return null;
 }
 
 function isFormField(node: GenericDomNode): boolean {
   const tag = (node.tagName || '').toLowerCase();
   return tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+function isLabelOrHeading(node: GenericDomNode): boolean {
+  const tag = (node.tagName || '').toLowerCase();
+  return tag === 'label' || tag === 'th' || tag === 'legend';
 }
 
 function walk(node: GenericDomNode, regions: SensitiveRegion[], source: DetectionSource, idSeed: { n: number }) {
@@ -106,6 +166,20 @@ function walk(node: GenericDomNode, regions: SensitiveRegion[], source: Detectio
         action: 'REDACT',
         domNodeId: node.id,
         domField: 'attributes.value',
+        bbox: node.bbox,
+      });
+    }
+  } else if (isLabelOrHeading(node)) {
+    const type = detectFromLabel(node);
+    if (type) {
+      regions.push({
+        id: `dom-label-${idSeed.n++}`,
+        type,
+        source,
+        confidence: 0.9,
+        action: 'REDACT',
+        domNodeId: node.id,
+        domField: 'text',
         bbox: node.bbox,
       });
     }

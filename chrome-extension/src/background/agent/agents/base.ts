@@ -7,7 +7,7 @@ import { createLogger } from '@src/background/log';
 import type { Action } from '../actions/builder';
 import { convertInputMessages, extractJsonFromModelOutput, removeThinkTags } from '../messages/utils';
 import { isAbortedError, ResponseParseError } from './errors';
-import { ProviderTypeEnum } from '@extension/storage';
+import { ProviderTypeEnum, privacyFlowStore } from '@extension/storage';
 
 const logger = createLogger('agent');
 
@@ -129,6 +129,7 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
     // (included + length) rather than dumping the (already-redacted, but
     // still large) base64 payload. Does NOT change any privacy behavior or
     // the messages themselves; remove once manual verification is done.
+    // eslint-disable-next-line no-constant-condition
     if (import.meta.env.DEV || true) {
       console.log('[PRIVACY DEBUG] OUTGOING LLM CONTEXT', {
         modelName: this.modelName,
@@ -179,6 +180,7 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
 
         if (response.parsed) {
           logger.debug(`[${this.modelName}] Successfully parsed structured output`);
+          this.recordIncomingPrivacyFlow(response.parsed);
           return response.parsed;
         }
         logger.error('Failed to parse response', response);
@@ -197,6 +199,7 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
         ) {
           const parsed = this.manuallyParseResponse(response.raw.content);
           if (parsed) {
+            this.recordIncomingPrivacyFlow(parsed);
             return parsed;
           }
         }
@@ -218,6 +221,7 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
       if (typeof response.content === 'string') {
         const parsed = this.manuallyParseResponse(response.content);
         if (parsed) {
+          this.recordIncomingPrivacyFlow(parsed);
           return parsed;
         }
       }
@@ -228,6 +232,31 @@ export abstract class BaseAgent<T extends z.ZodType, M = unknown> {
     const errorMessage = `Failed to parse response from ${this.modelName}`;
     logger.error(errorMessage);
     throw new ResponseParseError('Could not parse response');
+  }
+
+  private recordIncomingPrivacyFlow(output: unknown): void {
+    try {
+      const stepNum =
+        (this.context.stepInfo?.stepNumber !== undefined
+          ? this.context.stepInfo.stepNumber + 1
+          : this.context.nSteps) || 1;
+      const serialized = typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+      const dataKeysFound: string[] = [];
+      const matches = serialized.match(/profile\.[a-zA-Z0-9_]+/g);
+      if (matches) {
+        dataKeysFound.push(...Array.from(new Set(matches)));
+      }
+
+      const preview = serialized.length > 300 ? serialized.substring(0, 300) + '...' : serialized;
+      privacyFlowStore
+        .updateStepIncoming(stepNum, {
+          abstractPlanPreview: preview,
+          dataKeysUsed: dataKeysFound,
+        })
+        .catch(err => logger.warning('Failed to update incoming privacy flow:', err));
+    } catch (err) {
+      logger.warning('Failed to parse incoming privacy flow:', err);
+    }
   }
 
   // Execute the agent and return the result
