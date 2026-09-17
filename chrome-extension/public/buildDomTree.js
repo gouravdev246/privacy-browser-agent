@@ -1397,6 +1397,27 @@ window.buildDomTree = (
         const value = node.getAttribute(name);
         nodeData.attributes[name] = value;
       }
+      // Capture live/dynamic field values for inputs/textareas/selects
+      if (typeof node.value === 'string' && node.value) {
+        nodeData.attributes['value'] = node.value;
+      }
+      // Associate label text for form inputs so field semantics are preserved
+      try {
+        let labelText = '';
+        if (node.id) {
+          const lbl = document.querySelector('label[for="' + CSS.escape(node.id) + '"]');
+          if (lbl) labelText = lbl.textContent || '';
+        }
+        if (!labelText && typeof node.closest === 'function') {
+          const parentLbl = node.closest('label');
+          if (parentLbl) labelText = parentLbl.textContent || '';
+        }
+        if (labelText) {
+          nodeData.attributes['label'] = labelText.trim().replace(/\s+/g, ' ');
+        }
+      } catch {
+        // ignore label query errors
+      }
     }
 
     let nodeWasHighlighted = false;
@@ -1417,19 +1438,17 @@ window.buildDomTree = (
         }
 
         // Serialize this element's on-screen position, in the SAME
-        // top-level-viewport pixel space a screenshot is captured in, so the
-        // privacy engine (see chrome-extension/src/privacy-engine) can black
-        // out a sensitive element's exact rectangle on the screenshot, not
-        // just redact its text/attributes in the DOM listing sent to the
-        // LLM. Uses the already-cached rect (getCachedBoundingRect), not a
-        // fresh getBoundingClientRect() call, per the existing caching
-        // convention in this file.
+        // physical pixel space a screenshot is captured in (scaled by
+        // window.devicePixelRatio), so the privacy engine can black out a
+        // sensitive element's exact rectangle on the screenshot with pixel-perfect
+        // alignment, not just redact its text/attributes in the DOM listing.
         const elementRect = getCachedBoundingRect(node);
         if (elementRect && elementRect.width > 0 && elementRect.height > 0) {
           const offset = getIframeOffset(parentIframe);
+          const dpr = window.devicePixelRatio || 1;
           nodeData.viewportCoordinates = {
-            topLeft: { x: elementRect.left + offset.x, y: elementRect.top + offset.y },
-            bottomRight: { x: elementRect.right + offset.x, y: elementRect.bottom + offset.y },
+            topLeft: { x: (elementRect.left + offset.x) * dpr, y: (elementRect.top + offset.y) * dpr },
+            bottomRight: { x: (elementRect.right + offset.x) * dpr, y: (elementRect.bottom + offset.y) * dpr },
           };
         }
       }

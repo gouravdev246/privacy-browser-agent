@@ -1,3 +1,4 @@
+import { privacyFlowStore } from '@extension/storage';
 import { HumanMessage, type SystemMessage } from '@langchain/core/messages';
 import type { AgentContext } from '@src/background/agent/types';
 import { wrapUntrustedContent } from '../messages/utils';
@@ -60,7 +61,11 @@ abstract class BasePrompt {
     // url/title, every other open tab's url/title, AND action-result text —
     // there is no raw field from `browserState`/`context.actionResults` used
     // anywhere past this call.
-    const privacyResult = await privacyAdapter.sanitizeBrowserState(browserState, context.options.includeAttributes, actionResultsInput);
+    const privacyResult = await privacyAdapter.sanitizeBrowserState(
+      browserState,
+      context.options.includeAttributes,
+      actionResultsInput,
+    );
     if (!privacyResult.allowed) {
       throw new PrivacyBlockedError(
         `Privacy analysis of the current page could not be completed, so nothing was sent to the model. ${privacyResult.reason}`,
@@ -73,6 +78,57 @@ abstract class BasePrompt {
     );
 
     const rawElementsText = privacyResult.elementsText;
+
+    // Record Stage 1 (Sanitization) and Stage 2 (Outgoing to Server) for extension transparency indicator
+    try {
+      const sensitiveTypes = Array.from(new Set(privacyResult.sensitiveRegions.map(r => r.type)));
+      const sampleTokens: string[] = [];
+      const matches = rawElementsText.match(/\[[A-Z_]+_REDACTED\]/g);
+      if (matches) {
+        sampleTokens.push(...Array.from(new Set(matches)).slice(0, 5));
+      }
+
+      const dataKeysFound: string[] = [];
+      const dataKeyMatches = rawElementsText.match(/profile\.[a-zA-Z0-9_]+/g);
+      if (dataKeyMatches) {
+        dataKeysFound.push(...Array.from(new Set(dataKeyMatches)));
+      }
+
+      const stepNum = context.stepInfo ? context.stepInfo.stepNumber + 1 : 1;
+      const taskId = context.taskId || 'default_task';
+      const textPreview =
+        rawElementsText.length > 250
+          ? rawElementsText.substring(0, 250) + '...'
+          : rawElementsText || 'Empty page elements';
+
+      privacyFlowStore
+        .addStep({
+          stepNumber: stepNum,
+          taskId,
+          url: privacyResult.url || browserState.url || '',
+          title: privacyResult.title || browserState.title || '',
+          sanitization: {
+            sensitiveCount: privacyResult.sensitiveRegions.length,
+            types: sensitiveTypes,
+            sources: privacyResult.privacyMetadata.sourcesUsed || [],
+            redactionsCount: privacyResult.privacyMetadata.redactedCount ?? privacyResult.sensitiveRegions.length,
+            summary: `${privacyResult.sensitiveRegions.length} sensitive item(s) detected and redacted.`,
+            sampleRedactions: sampleTokens,
+            screenshotRedacted: Boolean(privacyResult.screenshot),
+          },
+          outgoing: {
+            modelName: 'Remote Agent LLM',
+            provider: 'Remote AI Provider',
+            charCount: rawElementsText.length,
+            sanitizedTextPreview: textPreview,
+            hasScreenshot: Boolean(privacyResult.screenshot && context.options.useVision),
+            dataKeysIncluded: dataKeysFound,
+          },
+        })
+        .catch(err => logger.warning('Failed to persist privacy flow step:', err));
+    } catch (err) {
+      logger.warning('Failed to record privacy flow event in prompt:', err);
+    }
 
     let formattedElementsText = '';
     if (rawElementsText !== '') {

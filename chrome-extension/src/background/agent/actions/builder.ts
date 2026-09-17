@@ -22,7 +22,10 @@ import {
   nextPageActionSchema,
   scrollToTopActionSchema,
   scrollToBottomActionSchema,
+  fillFormFieldActionSchema,
 } from './schemas';
+import { LocalActionResolver } from './localActionResolver';
+import { privacyFlowStore } from '@extension/storage';
 import { z } from 'zod';
 import { createLogger } from '@src/background/log';
 import { ExecutionState, Actors } from '../event/types';
@@ -701,6 +704,71 @@ export class ActionBuilder {
       true,
     );
     actions.push(selectDropdownOption);
+
+    // --- fill_form_field: privacy-preserving form fill with local data ---
+    const localResolver = new LocalActionResolver();
+    const fillFormField = new Action(
+      async (input: z.infer<typeof fillFormFieldActionSchema.schema>) => {
+        const intent = input.intent || `Fill form field at index ${input.index} with local data key "${input.dataKey}"`;
+        this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_START, intent);
+
+        const page = await this.context.browserContext.getCurrentPage();
+        const state = await page.getState();
+
+        const elementNode = state?.selectorMap.get(input.index);
+        if (!elementNode) {
+          const errorMsg = t('act_errors_elementNotExist', [input.index.toString()]);
+          this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
+          return new ActionResult({
+            error: errorMsg,
+            includeInMemory: true,
+          });
+        }
+
+        try {
+          // PRIVACY BOUNDARY: resolve the data key locally — value never leaves this scope
+          const resolved = await localResolver.resolve(input.dataKey);
+
+          // Record Stage 4 (Local Resolution) for extension transparency indicator
+          try {
+            const stepNum =
+              (this.context.stepInfo?.stepNumber !== undefined
+                ? this.context.stepInfo.stepNumber + 1
+                : this.context.nSteps) || 1;
+            privacyFlowStore
+              .updateStepResolution(stepNum, {
+                resolvedKeys: [input.dataKey],
+                elementIndex: input.index,
+                sanitizedMessage: resolved.sanitizedMessage,
+                timestamp: Date.now(),
+              })
+              .catch(err => logger.warning('Failed to update resolution privacy flow:', err));
+          } catch (err) {
+            logger.warning('Failed to record privacy resolution event:', err);
+          }
+
+          // Execute the fill action locally — the value goes straight to the DOM
+          await page.inputTextElementNode(this.context.options.useVision, elementNode, resolved.value);
+
+          // SANITIZED: return a generic success message, NEVER the actual value
+          const msg = resolved.sanitizedMessage;
+          this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_OK, msg);
+          return new ActionResult({ extractedContent: msg, includeInMemory: true });
+        } catch (error) {
+          // PRIVACY: error messages from LocalActionResolver are already sanitized
+          // (they contain the key name but NEVER the value)
+          const errorMsg = error instanceof Error ? error.message : 'Failed to fill form field with local data.';
+          this.context.emitEvent(Actors.NAVIGATOR, ExecutionState.ACT_FAIL, errorMsg);
+          return new ActionResult({
+            error: errorMsg,
+            includeInMemory: true,
+          });
+        }
+      },
+      fillFormFieldActionSchema,
+      true,
+    );
+    actions.push(fillFormField);
 
     return actions;
   }

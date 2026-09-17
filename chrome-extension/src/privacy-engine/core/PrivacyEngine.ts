@@ -8,11 +8,21 @@
  * There is no fallback path in this file that returns the original,
  * unredacted PageContext.
  */
-import type { Detector, NamedText, PageContext, PrivacyMetadata, PrivacyResult, SensitiveRegion, DetectionSource, TabContext } from './types';
+import type {
+  Detector,
+  NamedText,
+  PageContext,
+  PrivacyMetadata,
+  PrivacyResult,
+  SensitiveRegion,
+  DetectionSource,
+  TabContext,
+} from './types';
 import { PrivacyPolicy } from './PrivacyPolicy';
 import { DOMDetector } from '../detection/DOMDetector';
 import { RegexDetector } from '../detection/RegexDetector';
 import { VisionDetector } from '../detection/VisionDetector';
+import { OCRDetector } from '../detection/OCRDetector';
 import { DetectionFusion } from '../fusion/DetectionFusion';
 import { DOMRedactor } from '../redaction/DOMRedactor';
 import { ImageRedactor } from '../redaction/ImageRedactor';
@@ -32,6 +42,7 @@ export interface PrivacyEngineConfig {
   domDetector?: Detector;
   regexDetector?: Detector;
   visionDetector?: Detector;
+  ocrDetector?: Detector;
   fusion?: DetectionFusion;
   domRedactor?: DOMRedactor;
   imageRedactor?: ImageRedactor;
@@ -69,6 +80,7 @@ export class PrivacyEngine {
   private domDetector: Detector;
   private regexDetector: Detector;
   private visionDetector: Detector;
+  private ocrDetector: Detector;
   private fusion: DetectionFusion;
   private domRedactor: DOMRedactor;
   private imageRedactor: ImageRedactor;
@@ -80,6 +92,7 @@ export class PrivacyEngine {
     this.domDetector = config?.domDetector ?? new DOMDetector();
     this.regexDetector = config?.regexDetector ?? new RegexDetector();
     this.visionDetector = config?.visionDetector ?? new VisionDetector();
+    this.ocrDetector = config?.ocrDetector ?? new OCRDetector();
     this.fusion = config?.fusion ?? new DetectionFusion();
     this.domRedactor = config?.domRedactor ?? new DOMRedactor();
     this.imageRedactor = config?.imageRedactor ?? new ImageRedactor();
@@ -123,8 +136,9 @@ export class PrivacyEngine {
       return this.failClosed('Regex/structured detection failed', err);
     }
 
-    // --- Vision detection (only if a screenshot was supplied) ---
+    // --- Vision & OCR detection (only if a screenshot was supplied) ---
     if (pageContext.screenshot) {
+      // 1. Vision-based object detection (faces / persons)
       try {
         const t0 = now();
         const regions = await this.visionDetector.detect({ screenshot: pageContext.screenshot });
@@ -133,9 +147,25 @@ export class PrivacyEngine {
         sourcesUsed.push('vision');
       } catch (err) {
         if (this.requireVisionForScreenshots) {
-          return this.failClosed('Vision analysis of screenshot failed; refusing to transmit an unanalyzed screenshot', err);
+          return this.failClosed(
+            'Vision analysis of screenshot failed; refusing to transmit an unanalyzed screenshot',
+            err,
+          );
         }
         logger.warning('Vision analysis failed but requireVisionForScreenshots=false; continuing without vision.', err);
+      }
+
+      // 2. OCR-based text detection (rendered PII text in screenshot pixels)
+      try {
+        const t0 = now();
+        const ocrRegions = await this.ocrDetector.detect({ screenshot: pageContext.screenshot });
+        timings.ocrMs = now() - t0;
+        if (ocrRegions.length > 0) {
+          allRegions.push(...ocrRegions);
+          sourcesUsed.push('ocr');
+        }
+      } catch (err) {
+        logger.warning('OCR text detection on screenshot encountered an error; continuing with other detections.', err);
       }
     }
 
@@ -156,7 +186,10 @@ export class PrivacyEngine {
     try {
       const t0 = now();
       if (pageContext.dom) {
-        redactedCount += this.domRedactor.redact(pageContext.dom, fused.filter(r => r.domNodeId));
+        redactedCount += this.domRedactor.redact(
+          pageContext.dom,
+          fused.filter(r => r.domNodeId),
+        );
       }
 
       let sanitizedScreenshot: string | null | undefined = pageContext.screenshot ?? undefined;
@@ -178,7 +211,10 @@ export class PrivacyEngine {
       }
 
       const textRegions = fused.filter(r => r.textField);
-      const { redacted: redactedFields, redactedCount: textRedactedCount } = this.textRedactor.redact(textFields, textRegions);
+      const { redacted: redactedFields, redactedCount: textRedactedCount } = this.textRedactor.redact(
+        textFields,
+        textRegions,
+      );
       redactedCount += textRedactedCount;
 
       const sanitizedTabs: TabContext[] | undefined = pageContext.tabs?.map(tab => ({

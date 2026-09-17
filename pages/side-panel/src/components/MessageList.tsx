@@ -5,9 +5,10 @@ import { memo } from 'react';
 interface MessageListProps {
   messages: Message[];
   isDarkMode?: boolean;
+  onOpenPrivacyInspector?: () => void;
 }
 
-export default memo(function MessageList({ messages, isDarkMode = false }: MessageListProps) {
+export default memo(function MessageList({ messages, isDarkMode = false, onOpenPrivacyInspector }: MessageListProps) {
   return (
     <div className="max-w-full space-y-4">
       {messages.map((message, index) => (
@@ -16,6 +17,7 @@ export default memo(function MessageList({ messages, isDarkMode = false }: Messa
           message={message}
           isSameActor={index > 0 ? messages[index - 1].actor === message.actor : false}
           isDarkMode={isDarkMode}
+          onOpenPrivacyInspector={onOpenPrivacyInspector}
         />
       ))}
     </div>
@@ -26,9 +28,10 @@ interface MessageBlockProps {
   message: Message;
   isSameActor: boolean;
   isDarkMode?: boolean;
+  onOpenPrivacyInspector?: () => void;
 }
 
-function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlockProps) {
+function MessageBlock({ message, isSameActor, isDarkMode = false, onOpenPrivacyInspector }: MessageBlockProps) {
   if (!message.actor) {
     console.error('No actor found');
     return <div />;
@@ -66,7 +69,26 @@ function MessageBlock({ message, isSameActor, isDarkMode = false }: MessageBlock
                 <div className="h-full animate-progress bg-blue-500" />
               </div>
             ) : (
-              message.content
+              <>
+                {message.content}
+                {onOpenPrivacyInspector &&
+                  (message.content.includes('resolved securely on-device') ||
+                    message.content.includes('[REDACTED_')) && (
+                    <div className="mt-2">
+                      <button
+                        type="button"
+                        onClick={onOpenPrivacyInspector}
+                        className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                          isDarkMode
+                            ? 'border-emerald-800 bg-emerald-950/60 text-emerald-300 hover:bg-emerald-900/60'
+                            : 'border-emerald-300 bg-emerald-100/80 text-emerald-800 hover:bg-emerald-200'
+                        }`}>
+                        <span>🛡️</span>
+                        <span>Resolved on-device (Zero-PII server) • Inspect &rarr;</span>
+                      </button>
+                    </div>
+                  )}
+              </>
             )}
           </div>
           {!isProgress && (

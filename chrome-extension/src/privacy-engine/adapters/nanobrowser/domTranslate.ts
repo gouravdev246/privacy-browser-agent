@@ -28,7 +28,10 @@ export function toGenericDomSnapshot(root: DOMElementNode): DOMSnapshot {
   const nodesById = new Map<string, GenericDomNode>();
   let counter = 0;
 
-  const convert = (node: DOMElementNode | DOMTextNode): GenericDomNode => {
+  const convert = (
+    node: DOMElementNode | DOMTextNode,
+    parentBbox?: import('@src/privacy-engine/core/types').BoundingBox,
+  ): GenericDomNode => {
     const id = `n${counter++}`;
 
     if (node instanceof DOMTextNode) {
@@ -37,6 +40,7 @@ export function toGenericDomSnapshot(root: DOMElementNode): DOMSnapshot {
         tagName: null,
         attributes: {},
         isTextNode: true,
+        bbox: parentBbox,
         children: [],
       };
       Object.defineProperty(generic, 'text', {
@@ -50,32 +54,27 @@ export function toGenericDomSnapshot(root: DOMElementNode): DOMSnapshot {
       return generic;
     }
 
+    const currentBbox = node.viewportCoordinates
+      ? {
+          xmin: node.viewportCoordinates.topLeft.x,
+          ymin: node.viewportCoordinates.topLeft.y,
+          xmax: node.viewportCoordinates.bottomRight.x,
+          ymax: node.viewportCoordinates.bottomRight.y,
+        }
+      : parentBbox;
+
     const generic: GenericDomNode = {
       id,
       tagName: node.tagName,
       attributes: node.attributes, // shared reference: writes propagate to the original tree
-      // Populated by public/buildDomTree.js (via getCachedBoundingRect) and
-      // mapped through in background/browser/dom/service.ts::_parse_node —
-      // see PRIVACY.md's "screenshot region redaction" section. Falls back to
-      // undefined for nodes buildDomTree.js didn't capture a rect for (e.g.
-      // zero-size or not visible), in which case this node's SensitiveRegion
-      // still gets redacted in the DOM/text listing, just not on the
-      // screenshot.
-      bbox: node.viewportCoordinates
-        ? {
-            xmin: node.viewportCoordinates.topLeft.x,
-            ymin: node.viewportCoordinates.topLeft.y,
-            xmax: node.viewportCoordinates.bottomRight.x,
-            ymax: node.viewportCoordinates.bottomRight.y,
-          }
-        : undefined,
+      bbox: currentBbox,
       children: [],
     };
     nodesById.set(id, generic);
     const childNodes = node.children.filter(
       (child): child is DOMElementNode | DOMTextNode => child instanceof DOMElementNode || child instanceof DOMTextNode,
     );
-    generic.children = childNodes.map(convert);
+    generic.children = childNodes.map(c => convert(c, currentBbox));
     return generic;
   };
 
