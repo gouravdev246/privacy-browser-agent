@@ -1,16 +1,24 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { RxDiscordLogo } from 'react-icons/rx';
-import { FiSettings } from 'react-icons/fi';
+import { FiSettings, FiShield } from 'react-icons/fi';
 import { PiPlusBold } from 'react-icons/pi';
 import { GrHistory } from 'react-icons/gr';
-import { type Message, Actors, chatHistoryStore, agentModelStore, generalSettingsStore } from '@extension/storage';
+import {
+  type Message,
+  Actors,
+  chatHistoryStore,
+  agentModelStore,
+  generalSettingsStore,
+  privacyFlowStore,
+} from '@extension/storage';
 import favoritesStorage, { type FavoritePrompt } from '@extension/storage/lib/prompt/favorites';
 import { t } from '@extension/i18n';
 import MessageList from './components/MessageList';
 import ChatInput from './components/ChatInput';
 import ChatHistoryList from './components/ChatHistoryList';
 import BookmarkList from './components/BookmarkList';
+import { PrivacyFlowModal } from './components/PrivacyFlowModal';
 import { EventType, type AgentEvent, ExecutionState } from './types/event';
 import './SidePanel.css';
 
@@ -38,6 +46,8 @@ const SidePanel = () => {
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
   const [isReplaying, setIsReplaying] = useState(false);
   const [replayEnabled, setReplayEnabled] = useState(false);
+  const [showPrivacyInspector, setShowPrivacyInspector] = useState(false);
+  const [privacyRedactionsCount, setPrivacyRedactionsCount] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
   const isReplayingRef = useRef<boolean>(false);
   const portRef = useRef<chrome.runtime.Port | null>(null);
@@ -47,6 +57,26 @@ const SidePanel = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<number | null>(null);
+
+  // Subscribe to privacy flow updates for live counter
+  useEffect(() => {
+    privacyFlowStore.get().then(state => {
+      if (state) {
+        setPrivacyRedactionsCount(state.totalRedactionsCount || 0);
+      }
+    });
+
+    const unsub = privacyFlowStore.subscribe(() => {
+      const snap = privacyFlowStore.getSnapshot();
+      if (snap) {
+        setPrivacyRedactionsCount(snap.totalRedactionsCount || 0);
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, []);
 
   // Check for dark mode preference
   useEffect(() => {
@@ -1040,13 +1070,21 @@ const SidePanel = () => {
                 </button>
               </>
             )}
-            <a
-              href="https://discord.gg/NN3ABHggMK"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`header-icon ${isDarkMode ? 'text-sky-400 hover:text-sky-300' : 'text-sky-400 hover:text-sky-500'}`}>
-              <RxDiscordLogo size={20} />
-            </a>
+            <button
+              type="button"
+              onClick={() => setShowPrivacyInspector(true)}
+              onKeyDown={e => e.key === 'Enter' && setShowPrivacyInspector(true)}
+              className={`header-icon relative ${isDarkMode ? 'text-emerald-400 hover:text-emerald-300' : 'text-emerald-600 hover:text-emerald-700'} cursor-pointer`}
+              aria-label="Privacy & Data Flow Inspector"
+              title={`Privacy Data Flow Inspector (${privacyRedactionsCount} items redacted)`}
+              tabIndex={0}>
+              <FiShield size={20} />
+              {privacyRedactionsCount > 0 && (
+                <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white shadow">
+                  {privacyRedactionsCount > 99 ? '99+' : privacyRedactionsCount}
+                </span>
+              )}
+            </button>
             <button
               type="button"
               onClick={() => chrome.runtime.openOptionsPage()}
@@ -1058,6 +1096,35 @@ const SidePanel = () => {
             </button>
           </div>
         </header>
+        {/* Privacy Status Banner */}
+        <div
+          onClick={() => setShowPrivacyInspector(true)}
+          onKeyDown={e => e.key === 'Enter' && setShowPrivacyInspector(true)}
+          role="button"
+          tabIndex={0}
+          className={`flex items-center justify-between border-b px-3 py-1.5 cursor-pointer transition-colors text-xs select-none ${
+            isDarkMode
+              ? 'border-emerald-900/60 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/50'
+              : 'border-emerald-100 bg-emerald-50 text-emerald-800 hover:bg-emerald-100/70'
+          }`}
+          title="Click to inspect privacy pipeline: Sanitization -> Server LLM -> On-device Resolution">
+          <div className="flex items-center space-x-2 overflow-hidden">
+            <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="flex items-center gap-1 font-semibold tracking-wide">
+              <FiShield className="inline size-3 text-emerald-500" />
+              Privacy Engine:
+            </span>
+            <span className="truncate opacity-90">
+              {privacyRedactionsCount > 0
+                ? `${privacyRedactionsCount} PII fields redacted & kept on-device`
+                : 'Zero-PII transmission active'}
+            </span>
+          </div>
+          <div className="flex shrink-0 items-center space-x-1 text-[11px] font-medium opacity-75 hover:opacity-100">
+            <span>Data Flow</span>
+            <span>&rarr;</span>
+          </div>
+        </div>
         {showHistory ? (
           <div className="flex-1 overflow-hidden">
             <ChatHistoryList
@@ -1158,7 +1225,11 @@ const SidePanel = () => {
                 {messages.length > 0 && (
                   <div
                     className={`scrollbar-gutter-stable flex-1 overflow-x-hidden overflow-y-scroll scroll-smooth p-2 ${isDarkMode ? 'bg-slate-900/80' : ''}`}>
-                    <MessageList messages={messages} isDarkMode={isDarkMode} />
+                    <MessageList
+                      messages={messages}
+                      isDarkMode={isDarkMode}
+                      onOpenPrivacyInspector={() => setShowPrivacyInspector(true)}
+                    />
                     <div ref={messagesEndRef} />
                   </div>
                 )}
@@ -1187,6 +1258,12 @@ const SidePanel = () => {
           </>
         )}
       </div>
+
+      <PrivacyFlowModal
+        isOpen={showPrivacyInspector}
+        onClose={() => setShowPrivacyInspector(false)}
+        isDarkMode={isDarkMode}
+      />
     </div>
   );
 };

@@ -128,5 +128,25 @@ Common action sequences:
 - Plan is a json string wrapped by the <plan> tag
 - If a plan is provided, follow the instructions in the next_steps exactly first
 - If no plan is provided, just continue with the task
+
+13. Filling forms with user's saved data:
+
+- When the user asks to fill a form with their saved/personal information (e.g. "fill this form with my info", "enter my email", "use my saved address"), use the \`fill_form_field\` action.
+- Specify a \`dataKey\` from the following list:
+  - \`profile.fullName\` — user's full name
+  - \`profile.email\` — email address
+  - \`profile.phone\` — phone number
+  - \`profile.dateOfBirth\` — date of birth
+  - \`profile.address\` — street address
+  - \`profile.city\` — city
+  - \`profile.state\` — state/province
+  - \`profile.postalCode\` — postal/zip code
+  - \`profile.country\` — country
+- NEVER use literal personal data values in the action. Always use a dataKey reference.
+- The actual value is resolved locally in the browser and never sent to the AI.
+- Example: \`{"fill_form_field": {"intent": "Fill email field", "index": 3, "dataKey": "profile.email"}}\`
+- You can chain multiple fill_form_field actions to fill an entire form at once:
+  \`[{"fill_form_field": {"intent": "Fill name", "index": 1, "dataKey": "profile.fullName"}}, {"fill_form_field": {"intent": "Fill email", "index": 3, "dataKey": "profile.email"}}, {"fill_form_field": {"intent": "Fill phone", "index": 5, "dataKey": "profile.phone"}}]\`
+- If a fill action fails because no data is stored for a key, inform the user that they need to configure their profile in extension settings.
 </system_instructions>
 `;

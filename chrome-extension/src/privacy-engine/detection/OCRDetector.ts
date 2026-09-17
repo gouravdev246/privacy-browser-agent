@@ -68,9 +68,24 @@ function isValidImagePayload(rawBase64: string): boolean {
   return /^(?:iVBORw0KGgo|\/9j\/|UklGR|R0lGOD)/.test(rawBase64);
 }
 
+function isServiceWorker(): boolean {
+  return (
+    (typeof (globalThis as any).ServiceWorkerGlobalScope !== 'undefined' &&
+      typeof self !== 'undefined' &&
+      self instanceof (globalThis as any).ServiceWorkerGlobalScope) ||
+    (typeof (globalThis as any).importScripts === 'function' && typeof (globalThis as any).document === 'undefined')
+  );
+}
+
 export async function initOCRWorker(): Promise<any> {
   if (tesseractWorker || customOCR) return tesseractWorker;
   if (isInitializing) return null;
+
+  // In Chrome MV3, dynamic import() is disallowed by the HTML spec on ServiceWorkerGlobalScope.
+  // Guard against this so the service worker never throws or logs an unhandled exception.
+  if (isServiceWorker()) {
+    return null;
+  }
 
   isInitializing = true;
   try {
@@ -111,7 +126,6 @@ export class OCRDetector implements Detector {
       try {
         const worker = tesseractWorker || (await initOCRWorker());
         if (!worker) {
-          console.warn('[OCRDetector] Worker not available, skipping screenshot OCR');
           return [];
         }
 

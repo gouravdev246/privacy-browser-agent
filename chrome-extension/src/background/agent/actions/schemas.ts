@@ -213,3 +213,18 @@ export const waitActionSchema: ActionSchema = {
     seconds: z.number().int().default(3).describe('amount of seconds'),
   }),
 };
+
+export const fillFormFieldActionSchema: ActionSchema = {
+  name: 'fill_form_field',
+  description:
+    "Fill a form field with the user's locally stored profile data. Use this when the user asks to fill forms with their saved/personal information. Specify a dataKey reference — the actual value is resolved locally and never sent to the AI. Available dataKeys: profile.fullName, profile.email, profile.phone, profile.dateOfBirth, profile.address, profile.city, profile.state, profile.postalCode, profile.country",
+  schema: z.object({
+    intent: z.string().default('').describe('purpose of this action'),
+    index: z.number().int().describe('index of the form field element'),
+    dataKey: z
+      .string()
+      .describe(
+        'local data key to resolve, e.g. "profile.email". The actual value is fetched locally and never sent to the AI.',
+      ),
+  }),
+};

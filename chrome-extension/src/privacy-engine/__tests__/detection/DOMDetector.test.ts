@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { DOMDetector } from '../../detection/DOMDetector';
 import type { DOMSnapshot, GenericDomNode } from '../../core/types';
 
-function elementNode(id: string, tagName: string, attributes: Record<string, string>, children: GenericDomNode[] = []): GenericDomNode {
+function elementNode(
+  id: string,
+  tagName: string,
+  attributes: Record<string, string>,
+  children: GenericDomNode[] = [],
+): GenericDomNode {
   return { id, tagName, attributes, children };
 }
 
@@ -59,5 +64,37 @@ describe('DOMDetector', () => {
     const detector = new DOMDetector();
     const regions = await detector.detect({ dom: snapshot(root) });
     expect(regions.some(r => r.domNodeId === 'e2' && r.type === 'EMAIL')).toBe(true);
+  });
+
+  it('flags camelCase fullName, dob, panNumber, and mobileNumber inputs', async () => {
+    const nameNode = elementNode('e1', 'input', { name: 'fullName', value: 'Gourav Sarkar' });
+    const dobNode = elementNode('e2', 'input', { id: 'dob', value: '01/05/2001' });
+    const panNode = elementNode('e3', 'input', { name: 'panNumber', value: 'ABCDE1234F' });
+    const root = elementNode('form', 'form', {}, [nameNode, dobNode, panNode]);
+
+    const detector = new DOMDetector();
+    const regions = await detector.detect({ dom: snapshot(root) });
+
+    expect(regions.some(r => r.domNodeId === 'e1' && r.type === 'NAME')).toBe(true);
+    expect(regions.some(r => r.domNodeId === 'e2' && r.type === 'DOCUMENT')).toBe(true);
+    expect(regions.some(r => r.domNodeId === 'e3' && r.type === 'PAN')).toBe(true);
+  });
+
+  it('flags associated label elements with sensitive text or for-attributes', async () => {
+    const textChild: GenericDomNode = {
+      id: 't1',
+      tagName: null,
+      attributes: {},
+      isTextNode: true,
+      text: 'Full Name',
+      children: [],
+    };
+    const labelNode = elementNode('lbl1', 'label', { for: 'fullName' }, [textChild]);
+    const root = elementNode('form', 'form', {}, [labelNode]);
+
+    const detector = new DOMDetector();
+    const regions = await detector.detect({ dom: snapshot(root) });
+
+    expect(regions.some(r => r.domNodeId === 'lbl1' && r.type === 'NAME')).toBe(true);
   });
 });

@@ -58,20 +58,24 @@ const INPUT_TYPE_MAP: Record<string, SensitiveDataType> = {
 // Keyword -> type, matched (case-insensitively, whole-word-ish) against label/name/id/aria-label/placeholder.
 const KEYWORD_RULES: Array<{ pattern: RegExp; type: SensitiveDataType }> = [
   { pattern: /aadhaar|aadhar|uidai/i, type: 'AADHAAR' },
-  { pattern: /\bpan\b|pan[_-]?number|pan[_-]?card|pan[_-]?no/i, type: 'PAN' },
-  { pattern: /passport/i, type: 'PASSPORT' },
-  { pattern: /\b(dob|birth|bday|date[_-]?of[_-]?birth)\b/i, type: 'DOCUMENT' },
+  { pattern: /\bpan\b|pan[_-]?(?:number|no|card)|pannumber|panno|pancard/i, type: 'PAN' },
+  { pattern: /passport|passport[_-]?(?:number|no)|passportnumber|passportno/i, type: 'PASSPORT' },
+  {
+    pattern: /\b(?:dob|birth|bday|date[_-]?of[_-]?birth|dateofbirth|birthdate|birth[_-]?date)\b/i,
+    type: 'DOCUMENT',
+  },
   { pattern: /ifsc/i, type: 'IFSC' },
-  { pattern: /account[_-]?number|bank[_-]?account|acc[_-]?no/i, type: 'BANK_ACCOUNT' },
-  { pattern: /credit[_-]?card|debit[_-]?card|card[_-]?number|cvv|cvc/i, type: 'CREDIT_CARD' },
+  { pattern: /account[_-]?number|bank[_-]?account|acc[_-]?no|accountnumber/i, type: 'BANK_ACCOUNT' },
+  { pattern: /credit[_-]?card|debit[_-]?card|card[_-]?number|cardnumber|cvv|cvc/i, type: 'CREDIT_CARD' },
   { pattern: /\botp\b|one[-_]?time[-_]?(?:passcode|password|code)/i, type: 'OTP' },
   {
-    pattern: /\b(full[_-]?name|first[_-]?name|last[_-]?name|surname|given[_-]?name|applicant[_-]?name|name)\b/i,
+    pattern:
+      /(?:full|first|last|given|sur|applicant|user|middle)[_-]?name|fname|lname|fullname|firstname|lastname|\bname\b/i,
     type: 'NAME',
   },
   { pattern: /address|street|city|pincode|postal|residence|residential/i, type: 'ADDRESS' },
-  { pattern: /phone|mobile|contact[_-]?number|telephone/i, type: 'PHONE' },
-  { pattern: /\bemail\b/i, type: 'EMAIL' },
+  { pattern: /phone|mobile|cell|contact[_-]?(?:number|no)|mobilenumber|phonenumber|telephone/i, type: 'PHONE' },
+  { pattern: /\bemail\b|e-mail|emailaddress|email[_-]?address/i, type: 'EMAIL' },
 ];
 
 const FIELD_LABEL_ATTRS = ['label', 'name', 'id', 'aria-label', 'placeholder', 'title'];
@@ -115,9 +119,37 @@ function detectFromField(node: GenericDomNode): SensitiveDataType | null {
   return null;
 }
 
+function detectFromLabel(node: GenericDomNode): SensitiveDataType | null {
+  const forAttr = node.attributes?.for;
+  if (forAttr) {
+    for (const rule of KEYWORD_RULES) {
+      if (rule.pattern.test(forAttr)) {
+        return rule.type;
+      }
+    }
+  }
+  const text = node.children
+    .filter(c => c.isTextNode && c.text)
+    .map(c => c.text)
+    .join(' ');
+  if (text) {
+    for (const rule of KEYWORD_RULES) {
+      if (rule.pattern.test(text)) {
+        return rule.type;
+      }
+    }
+  }
+  return null;
+}
+
 function isFormField(node: GenericDomNode): boolean {
   const tag = (node.tagName || '').toLowerCase();
   return tag === 'input' || tag === 'textarea' || tag === 'select';
+}
+
+function isLabelOrHeading(node: GenericDomNode): boolean {
+  const tag = (node.tagName || '').toLowerCase();
+  return tag === 'label' || tag === 'th' || tag === 'legend';
 }
 
 function walk(node: GenericDomNode, regions: SensitiveRegion[], source: DetectionSource, idSeed: { n: number }) {
@@ -134,6 +166,20 @@ function walk(node: GenericDomNode, regions: SensitiveRegion[], source: Detectio
         action: 'REDACT',
         domNodeId: node.id,
         domField: 'attributes.value',
+        bbox: node.bbox,
+      });
+    }
+  } else if (isLabelOrHeading(node)) {
+    const type = detectFromLabel(node);
+    if (type) {
+      regions.push({
+        id: `dom-label-${idSeed.n++}`,
+        type,
+        source,
+        confidence: 0.9,
+        action: 'REDACT',
+        domNodeId: node.id,
+        domField: 'text',
         bbox: node.bbox,
       });
     }
